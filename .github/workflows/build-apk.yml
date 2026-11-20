@@ -1,5 +1,9 @@
 name: Gerar APK
 
+# Roda a cada push na main (e também manualmente, pela aba Actions).
+# Este arquivo é autossuficiente: ele mesmo cria o capacitor.config.json, o package.json
+# e o CSS das barras do Android durante o build. Só falta o seu site:
+# coloque o index.html na raiz do repositório ou numa pasta chamada www.
 on:
   push:
     branches: [main]
@@ -18,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: write # necessário para publicar o APK em Releases
 
     steps:
       - name: Baixar o código
@@ -35,46 +39,179 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Separar o site (pasta www ou raiz do repositório)
+        run: |
+          mkdir -p _apk/www
+          if [ -f www/index.html ]; then
+            cp -a www/. _apk/www/
+          elif [ -f index.html ]; then
+            find . -mindepth 1 -maxdepth 1 \
+              ! -name .git ! -name .github ! -name _apk ! -name node_modules ! -name android \
+              ! -name README.md ! -name .gitignore \
+              -exec cp -a {} _apk/www/ \;
+          else
+            echo "::error::Não achei o index.html. Coloque o seu site na raiz do repositório ou na pasta www."
+            exit 1
+          fi
+
       - name: Definir nome e ID do app a partir do nome do repositório
         run: |
           NOME="${GITHUB_REPOSITORY#*/}"
           SLUG="$(echo "${GITHUB_REPOSITORY_OWNER}_${NOME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
           echo "APP_NOME=$NOME" >> "$GITHUB_ENV"
-          node -e '
-            const fs = require("fs");
-            const c = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
-            c.appName = process.argv[1];
-            c.appId = "com.github.r_" + process.argv[2];
-            fs.writeFileSync("capacitor.config.json", JSON.stringify(c, null, 2) + "\n");
-          ' "$NOME" "$SLUG"
+          echo "APP_ID=com.github.r_$SLUG" >> "$GITHUB_ENV"
 
-      - name: Instalar o Capacitor
-        run: npm install --no-audit --no-fund
+      - name: Criar o projeto Capacitor
+        working-directory: _apk
+        run: |
+          cat > package.json <<'EOF'
+          {
+            "name": "site-para-apk",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^8.0.0",
+              "@capacitor/core": "^8.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^8.0.0"
+            }
+          }
+          EOF
+          node - <<'EOF'
+          const fs = require("fs");
+          const config = {
+            appId: process.env.APP_ID,
+            appName: process.env.APP_NOME,
+            webDir: "www",
+            plugins: {
+              SystemBars: { insetsHandling: "css", initialViewportFitValueHint: "cover" }
+            }
+          };
+          fs.writeFileSync("capacitor.config.json", JSON.stringify(config, null, 2) + "\n");
+          EOF
 
       - name: Ajustar o site para as barras do Android
+        working-directory: _apk
         run: |
-          cp apk-safe-area.css www/apk-safe-area.css
-          find www -type f -name '*.html' -exec sed -i -E 's#<head(\s[^>]*)?>#<head\1><link rel="stylesheet" href="/apk-safe-area.css">#I' {} +
+          cat > www/apk-safe-area.css <<'EOF'
+          /* Adicionado automaticamente no APK: evita que o conteúdo fique atrás das barras do sistema do Android. */
+          html {
+            box-sizing: border-box;
+            padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+            padding-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+            padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+            padding-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+          }
+          EOF
+          node - <<'EOF'
+          const fs = require("fs");
+          const path = require("path");
+          const listar = (d) => fs.readdirSync(d, { withFileTypes: true })
+            .flatMap((e) => (e.isDirectory() ? listar(path.join(d, e.name)) : [path.join(d, e.name)]));
+          const META = '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">';
+          const LINK = '<link rel="stylesheet" href="/apk-safe-area.css">';
+          for (const arq of listar("www").filter((f) => /\.html?$/i.test(f))) {
+            const original = fs.readFileSync(arq, "utf8");
+            let h = original;
+            const abreHead = /<head(\s[^>]*)?>/i;
+            if (!abreHead.test(h)) continue;
+            if (!/viewport-fit\s*=\s*cover/i.test(h)) {
+              const tag = /<meta\b[^>]*\bname\s*=\s*["']viewport["'][^>]*>/i.exec(h);
+              if (tag) {
+                const nova = tag[0].replace(/(\bcontent\s*=\s*)(["'])(.*?)\2/i, "$1$2$3, viewport-fit=cover$2");
+                h = h.replace(tag[0], () => nova);
+              } else {
+                h = h.replace(abreHead, (m) => m + META);
+              }
+            }
+            h = h.replace(abreHead, (m) => m + LINK);
+            if (h !== original) fs.writeFileSync(arq, h);
+          }
+          EOF
 
       - name: Usar sempre a mesma chave de assinatura de teste
         run: |
           mkdir -p ~/.android
-          base64 -d debug.keystore.base64 > ~/.android/debug.keystore
+          base64 -d > ~/.android/debug.keystore <<'EOF'
+          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
+          BBRMzUCUOx1NngdjFYrRYmV33+KIwQICJxA=
+          EOF
+
+      - name: Instalar o Capacitor
+        working-directory: _apk
+        run: npm install --no-audit --no-fund
 
       - name: Criar o projeto Android
+        working-directory: _apk
         run: npx cap add android
 
       - name: Copiar o site para o app
+        working-directory: _apk
         run: npx cap sync android
 
       - name: Compilar o APK
-        working-directory: android
+        working-directory: _apk/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
       - name: Renomear o APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk "${APP_NOME}.apk"
+        run: cp _apk/android/app/build/outputs/apk/debug/app-debug.apk "${APP_NOME}.apk"
 
       - name: Guardar o APK como artefato (cópia de segurança)
         uses: actions/upload-artifact@v7
@@ -85,9 +222,14 @@ jobs:
       - name: Publicar o APK em Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release delete apk-mais-recente --cleanup-tag --yes || true
           gh release create apk-mais-recente "${APP_NOME}.apk" \
             --title "APK mais recente" \
             --notes "APK gerado automaticamente a partir do commit ${GITHUB_SHA::7}." \
             --target "$GITHUB_SHA"
+
+      - name: Mostrar onde está o APK
+        run: |
+          echo "APK pronto. Baixe em: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/apk-mais-recente" >> "$GITHUB_STEP_SUMMARY"
