@@ -1,63 +1,216 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Minhas tarefas</title>
-  <style>
-    body { margin: 0; font-family: system-ui, sans-serif; background: #f4f6f8; color: #1f2328; }
-    main { max-width: 480px; margin: 0 auto; padding: 20px; }
-    h1 { font-size: 1.5rem; }
-    form { display: flex; gap: 8px; }
-    input { flex: 1; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
-    button { padding: 12px 16px; border: 0; border-radius: 8px; background: #0969da; color: #fff; font-size: 16px; }
-    ul { list-style: none; padding: 0; margin-top: 16px; }
-    li { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-    li.feita span { text-decoration: line-through; color: #888; }
-    .del { background: #cf222e; padding: 8px 12px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Site → APK</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#656d76;--card:#f6f8fa;--bd:#d0d7de;--ok:#1a7f37;--bad:#cf222e;--accent:#0969da;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--fg:#e6edf3;--muted:#8d96a0;--card:#161b22;--bd:#30363d;--ok:#3fb950;--bad:#f85149;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1117;--fg:#e6edf3;--muted:#8d96a0;--card:#161b22;--bd:#30363d;--ok:#3fb950;--bad:#f85149;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:.2em 0}
+h2{font-size:1.05rem;margin:0 0 10px}
+.sub{color:var(--muted);margin:0 0 16px}
+section{border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:16px;background:var(--card)}
+label{display:block;font-size:.9rem;margin-bottom:12px}
+input[type=text],input[type=password]{width:100%;margin-top:4px;padding:9px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+input[type=file]{margin-top:4px;font:inherit}
+.btn{padding:11px 18px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.55;cursor:default}
+.small{color:var(--muted);font-size:.85rem;margin:6px 0 0}
+#log{margin-top:12px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:10px;min-height:48px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+#result a.dl{display:inline-block;margin-top:10px;padding:12px 18px;border-radius:8px;background:var(--ok);color:#fff;font-weight:600;text-decoration:none}
+a{color:var(--accent)}
+</style>
 </head>
 <body>
-  <main>
-    <h1>Minhas tarefas</h1>
-    <form id="form">
-      <input id="texto" placeholder="Nova tarefa" autocomplete="off" required>
-      <button>Adicionar</button>
-    </form>
-    <ul id="lista"></ul>
-  </main>
-  <script>
-    const form = document.getElementById("form");
-    const lista = document.getElementById("lista");
-    let tarefas = JSON.parse(localStorage.getItem("tarefas") || "[]");
+<main>
+  <h1>Site → APK</h1>
+  <p class="sub">Envie o seu site e receba um APK. O build roda no GitHub Actions da sua conta.</p>
 
-    function salvar() {
-      localStorage.setItem("tarefas", JSON.stringify(tarefas));
-      desenhar();
+  <section>
+    <h2>1. Conexão com o GitHub</h2>
+    <label>Token de acesso (fine-grained, com permissões <b>Contents</b> e <b>Actions</b> de leitura e escrita)
+      <input id="token" type="password" autocomplete="off" placeholder="github_pat_...">
+    </label>
+    <label>Repositório que gera o APK (no formato dono/nome)
+      <input id="repo" type="text" autocomplete="off" placeholder="seu-usuario/meu-site">
+    </label>
+    <p class="small">O token fica só nesta página, na memória: some quando você fecha ou recarrega. O repositório precisa ter sido criado a partir do modelo <b>modelo-html-para-apk</b>.</p>
+  </section>
+
+  <section>
+    <h2>2. Seu site</h2>
+    <label>Arquivo .zip do site
+      <input id="zip" type="file" accept=".zip">
+    </label>
+    <label>Ou uma pasta inteira
+      <input id="dir" type="file" webkitdirectory directory multiple>
+    </label>
+    <p class="small">O site precisa ter um <code>index.html</code> na raiz (ou dentro de uma única pasta).</p>
+  </section>
+
+  <button class="btn" id="go">Gerar APK</button>
+  <div id="log" aria-live="polite">Aguardando…</div>
+  <div id="result"></div>
+</main>
+
+<script>
+const API = "https://api.github.com";
+const $ = s => document.getElementById(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const logEl = $("log");
+function log(msg) { logEl.textContent += "\n" + msg; logEl.scrollTop = logEl.scrollHeight; }
+
+async function gh(token, path, opts = {}) {
+  const headers = {
+    Accept: "application/vnd.github+json",
+    Authorization: "Bearer " + token,
+    "X-GitHub-Api-Version": "2022-11-28"
+  };
+  if (opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(API + path, {
+    method: opts.method || "GET",
+    headers,
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`GitHub respondeu ${r.status} em ${path}: ${t.slice(0, 200)}`);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// Remove a pasta de topo se o zip/pasta tiver uma só (ex.: "meu-site/index.html" -> "index.html")
+function commonRoot(names) {
+  if (!names.length || names.some(n => !n.includes("/"))) return "";
+  const first = names[0].split("/")[0];
+  return names.every(n => n.startsWith(first + "/")) ? first + "/" : "";
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result.split(",")[1]);
+    fr.onerror = () => reject(new Error("Não consegui ler " + file.name));
+    fr.readAsDataURL(file);
+  });
+}
+
+async function collectFiles() {
+  const out = new Map();
+  const zipFile = $("zip").files[0];
+  const dirFiles = [...$("dir").files];
+
+  if (zipFile) {
+    log("Lendo o .zip…");
+    const zip = await JSZip.loadAsync(zipFile);
+    const entries = Object.values(zip.files).filter(f => !f.dir && !f.name.startsWith("__MACOSX/"));
+    const prefix = commonRoot(entries.map(f => f.name));
+    for (const f of entries) {
+      const rel = f.name.slice(prefix.length);
+      if (rel) out.set(rel, await f.async("base64"));
     }
-
-    function desenhar() {
-      lista.innerHTML = "";
-      tarefas.forEach((t, i) => {
-        const li = document.createElement("li");
-        if (t.feita) li.classList.add("feita");
-        li.innerHTML = `<span>${t.texto}</span><button class="del">✕</button>`;
-        li.querySelector("span").onclick = () => { t.feita = !t.feita; salvar(); };
-        li.querySelector("button").onclick = () => { tarefas.splice(i, 1); salvar(); };
-        lista.appendChild(li);
-      });
+  } else if (dirFiles.length) {
+    log("Lendo a pasta…");
+    const prefix = commonRoot(dirFiles.map(f => f.webkitRelativePath));
+    for (const f of dirFiles) {
+      const rel = f.webkitRelativePath.slice(prefix.length);
+      if (rel) out.set(rel, await fileToBase64(f));
     }
+  } else {
+    throw new Error("Escolha um .zip ou uma pasta com o seu site.");
+  }
 
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const texto = document.getElementById("texto").value.trim();
-      if (!texto) return;
-      tarefas.push({ texto, feita: false });
-      document.getElementById("texto").value = "";
-      salvar();
-    };
+  if (!out.has("index.html")) throw new Error("Não encontrei index.html na raiz do site.");
+  if ([...out.keys()].some(k => k.startsWith("www/") || k === "www")) {
+    throw new Error("Os arquivos não podem ter uma pasta chamada 'www' dentro do site. Renomeie-a.");
+  }
+  log(`${out.size} arquivo(s) prontos.`);
+  return out;
+}
 
-    desenhar();
-  </script>
+async function pushToRepo(token, repo, files) {
+  log("Lendo o estado atual do repositório…");
+  const ref = await gh(token, `/repos/${repo}/git/ref/heads/main`);
+  const parentSha = ref.object.sha;
+  const parent = await gh(token, `/repos/${repo}/git/commits/${parentSha}`);
+  const current = await gh(token, `/repos/${repo}/git/trees/${parent.tree.sha}?recursive=1`);
+  if (current.truncated) throw new Error("O repositório ficou grande demais para esta página.");
+
+  const entries = [];
+  log("Enviando os arquivos novos…");
+  for (const [rel, b64] of files) {
+    const blob = await gh(token, `/repos/${repo}/git/blobs`, { method: "POST", body: { content: b64, encoding: "base64" } });
+    entries.push({ path: "www/" + rel, mode: "100644", type: "blob", sha: blob.sha });
+  }
+  // Apaga de www/ o que não existe mais no site novo (sem mexer no resto do repositório)
+  for (const t of current.tree) {
+    if (t.type === "blob" && t.path.startsWith("www/") && !files.has(t.path.slice(4))) {
+      entries.push({ path: t.path, mode: "100644", type: "blob", sha: null });
+    }
+  }
+
+  const tree = await gh(token, `/repos/${repo}/git/trees`, { method: "POST", body: { base_tree: parent.tree.sha, tree: entries } });
+  const commit = await gh(token, `/repos/${repo}/git/commits`, {
+    method: "POST",
+    body: { message: "Atualiza o site (via Site → APK)", tree: tree.sha, parents: [parentSha] }
+  });
+  await gh(token, `/repos/${repo}/git/refs/heads/main`, { method: "PATCH", body: { sha: commit.sha, force: false } });
+  log("Site enviado. Esperando o build no GitHub Actions…");
+  return commit.sha;
+}
+
+async function waitForBuild(token, repo, sha) {
+  const deadline = Date.now() + 25 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const { workflow_runs } = await gh(token, `/repos/${repo}/actions/runs?branch=main&per_page=10`);
+    const run = workflow_runs.find(r => r.head_sha === sha && r.name === "Gerar APK");
+    if (run && run.status === "completed") {
+      if (run.conclusion !== "success") throw new Error(`O build falhou. Veja o erro em: ${run.html_url}`);
+      return run;
+    }
+    log(run ? `Build em andamento (${run.status})…` : "Aguardando o build começar…");
+    await sleep(15000);
+  }
+  throw new Error("O build demorou demais. Confira a aba Actions do repositório.");
+}
+
+async function getApkLink(token, repo) {
+  const rel = await gh(token, `/repos/${repo}/releases/tags/apk-mais-recente`);
+  const asset = rel.assets.find(a => a.name.endsWith(".apk"));
+  if (!asset) throw new Error("O build terminou, mas o APK não foi encontrado na release.");
+  return { url: asset.browser_download_url, name: asset.name, page: rel.html_url };
+}
+
+$("go").onclick = async () => {
+  const token = $("token").value.trim();
+  const repo = $("repo").value.trim();
+  const btn = $("go");
+  $("result").innerHTML = "";
+  logEl.textContent = "Iniciando…";
+  if (!token) return log("✘ Informe o token.");
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) return log("✘ Informe o repositório no formato dono/nome.");
+
+  btn.disabled = true;
+  try {
+    const files = await collectFiles();
+    const sha = await pushToRepo(token, repo, files);
+    await waitForBuild(token, repo, sha);
+    const apk = await getApkLink(token, repo);
+    log("✔ APK pronto!");
+    $("result").innerHTML = `<a class="dl" href="${apk.url}">Baixar ${apk.name}</a>
+      <p class="small">Abra este link no celular para instalar. Se o Android perguntar, permita a instalação de apps desta fonte.</p>`;
+  } catch (e) {
+    log("✘ " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
 </body>
 </html>
