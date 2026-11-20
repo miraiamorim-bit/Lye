@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Minhas tarefas</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f4f6f8; color: #1f2328; }
+    main { max-width: 480px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 1.5rem; }
+    form { display: flex; gap: 8px; }
+    input { flex: 1; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 12px 16px; border: 0; border-radius: 8px; background: #0969da; color: #fff; font-size: 16px; }
+    ul { list-style: none; padding: 0; margin-top: 16px; }
+    li { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    li.feita span { text-decoration: line-through; color: #888; }
+    .del { background: #cf222e; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Minhas tarefas</h1>
+    <form id="form">
+      <input id="texto" placeholder="Nova tarefa" autocomplete="off" required>
+      <button>Adicionar</button>
+    </form>
+    <ul id="lista"></ul>
+  </main>
+  <script>
+    const form = document.getElementById("form");
+    const lista = document.getElementById("lista");
+    let tarefas = JSON.parse(localStorage.getItem("tarefas") || "[]");
+
+    function salvar() {
+      localStorage.setItem("tarefas", JSON.stringify(tarefas));
+      desenhar();
+    }
+
+    function desenhar() {
+      lista.innerHTML = "";
+      tarefas.forEach((t, i) => {
+        const li = document.createElement("li");
+        if (t.feita) li.classList.add("feita");
+        li.innerHTML = `<span>${t.texto}</span><button class="del">✕</button>`;
+        li.querySelector("span").onclick = () => { t.feita = !t.feita; salvar(); };
+        li.querySelector("button").onclick = () => { tarefas.splice(i, 1); salvar(); };
+        lista.appendChild(li);
+      });
+    }
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const texto = document.getElementById("texto").value.trim();
+      if (!texto) return;
+      tarefas.push({ texto, feita: false });
+      document.getElementById("texto").value = "";
+      salvar();
+    };
+
+    desenhar();
+  </script>
+</body>
+</html>
